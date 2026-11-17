@@ -1,15 +1,23 @@
 name: eShopOnWeb Build and Test
 
-#Triggers (uncomment line below to use it)
-#on: [push, workflow_dispatch]
+on:
+  workflow_dispatch:
+    inputs:
+      resource_group:
+        description: Existing Azure resource group
+        required: true
+        type: string
+      location:
+        description: Azure region code (for example, westeurope)
+        required: true
+        type: string
+      web_app_name:
+        description: Globally unique App Service name
+        required: true
+        type: string
 
-#Environment variables https://docs.github.com/en/actions/learn-github-actions/environment-variables
 env:
-  RESOURCE-GROUP: rg-eshoponweb-NAME
-  LOCATION: westeurope
   TEMPLATE-FILE: infra/webapp.bicep
-  SUBSCRIPTION-ID: YOUR-SUBS-ID
-  WEBAPP-NAME: eshoponweb-webapp-NAME
 
 jobs:
   #Build, test and publish .net web project in repository
@@ -52,8 +60,15 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     needs: buildandtest
+    permissions:
+      contents: read
+      id-token: write
     environment:
       name: "Development"
+    env:
+      RESOURCE_GROUP: ${{ inputs.resource_group }}
+      AZURE_LOCATION: ${{ inputs.location }}
+      WEB_APP_NAME: ${{ inputs.web_app_name }}
     steps:
       #Download the publish files created in previous job
       - name: Download artifact from build job
@@ -69,20 +84,21 @@ jobs:
           name: bicep-template
           path: bicep-template
 
-      #Login in your azure subscription using a service principal (credentials stored as GitHub Secret in repo)
       - name: Azure Login
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       # Deploy Azure WebApp using Bicep file
       - name: deploy
         uses: azure/arm-deploy@v2
         with:
-          subscriptionId: ${{ env.SUBSCRIPTION-ID }}
-          resourceGroupName: ${{ env.RESOURCE-GROUP }}
+          subscriptionId: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          resourceGroupName: ${{ env.RESOURCE_GROUP }}
           template: bicep-template/webapp.bicep
-          parameters: "webAppName=${{ env.WEBAPP-NAME }} location=${{ env.LOCATION }}"
+          parameters: "webAppName=${{ env.WEB_APP_NAME }} location=${{ env.AZURE_LOCATION }}"
           failOnStdErr: false
 
       # Publish website to Azure App Service (WebApp)
@@ -92,7 +108,7 @@ jobs:
         uses: Azure/webapps-deploy@v3
         with:
           type: ZIP
-          app-name: ${{ env.WEBAPP-NAME  }}
+          app-name: ${{ env.WEB_APP_NAME }}
           package: .net-app/app.zip
 
       # Publish website to Azure App Service using CLI (WebApp)
@@ -100,4 +116,4 @@ jobs:
         uses: Azure/cli@v2
         with:
           inlineScript: |
-            az webapp deploy --name ${{ env.WEBAPP-NAME }} --resource-group ${{ env.RESOURCE-GROUP }} --src-path .net-app/app.zip --type zip
+            az webapp deploy --name "$WEB_APP_NAME" --resource-group "$RESOURCE_GROUP" --src-path .net-app/app.zip --type zip
